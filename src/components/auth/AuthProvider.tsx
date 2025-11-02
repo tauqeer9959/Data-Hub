@@ -319,9 +319,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     let mounted = true;
     
-    // Get initial session in background
-    setTimeout(() => {
-      supabase.auth.getSession().then(async ({ data: { session }, error }) => {
+    // Check if we're on the callback page
+    const isCallbackPage = window.location.pathname === '/auth/callback';
+    
+    // Get initial session
+    const initializeAuth = async () => {
+      try {
+        // If we're on the callback page, give it time to process
+        if (isCallbackPage) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
         if (!mounted) return;
         
         if (error) {
@@ -338,17 +348,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
           // Fetch profile in background without blocking the UI
           setTimeout(() => {
             fetchProfile(session.user.id, session.access_token, session.user);
-          }, 500);
+          }, isCallbackPage ? 1000 : 500);
         }
-      }).catch((error) => {
-        console.warn('Session initialization failed (non-blocking):', error.message);
-      });
-    }, 100);
+      } catch (error) {
+        console.warn('Session initialization failed (non-blocking):', error);
+      }
+    };
+    
+    // Start initialization after a short delay
+    setTimeout(initializeAuth, 100);
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('Auth state change:', event, !!session);
+        console.log('Auth state change:', event, !!session, session?.user?.email);
         
         if (!mounted) return;
         
@@ -360,11 +373,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
           setAuthError(null);
         }
         
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          console.log('User signed in or token refreshed, fetching profile...');
+        }
+        
         if (session?.user && session.access_token) {
           // Fetch profile in background without blocking
+          const delay = (event === 'SIGNED_IN') ? 500 : 200;
           setTimeout(() => {
             fetchProfile(session.user.id, session.access_token, session.user);
-          }, 200);
+          }, delay);
         } else {
           setProfile(null);
         }

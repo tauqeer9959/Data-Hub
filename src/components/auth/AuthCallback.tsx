@@ -8,23 +8,33 @@ export function AuthCallback() {
   const [status, setStatus] = useState('processing');
   const [progress, setProgress] = useState(0);
   const [userInfo, setUserInfo] = useState<{ name: string; email: string } | null>(null);
+  const [debugInfo, setDebugInfo] = useState<string[]>([]);
+
+  const addDebugInfo = (info: string) => {
+    console.log('[AuthCallback]', info);
+    setDebugInfo(prev => [...prev, `${new Date().toLocaleTimeString()}: ${info}`]);
+  };
 
   useEffect(() => {
     const handleAuthCallback = async () => {
       const maxTimeout = setTimeout(() => {
         console.error('Auth callback timeout');
+        addDebugInfo('Timeout after 20 seconds');
         setStatus('error');
         toast.error('Authentication timed out. Please try again.', { duration: 5000 });
-        // Don't auto-redirect on timeout, let user choose
       }, 20000); // 20 second timeout
 
       try {
         setStatus('processing');
         setProgress(10);
+        addDebugInfo('Starting auth callback processing');
         
         // Step 1: Check URL for auth fragments first
         const hashParams = new URLSearchParams(window.location.hash.substring(1));
         const urlParams = new URLSearchParams(window.location.search);
+        
+        addDebugInfo(`URL hash params: ${window.location.hash}`);
+        addDebugInfo(`URL query params: ${window.location.search}`);
         
         // Check for error in URL parameters
         const error = hashParams.get('error') || urlParams.get('error');
@@ -32,6 +42,7 @@ export function AuthCallback() {
         
         if (error) {
           clearTimeout(maxTimeout);
+          addDebugInfo(`OAuth error: ${error} - ${errorDescription}`);
           console.error('OAuth error from URL:', error, errorDescription);
           setStatus('error');
           
@@ -50,13 +61,78 @@ export function AuthCallback() {
         
         setProgress(30);
         
-        // Step 2: Handle the OAuth callback
+        // Step 2: Exchange the OAuth code for a session
+        // First check if there's a code in the URL (for PKCE OAuth callback)
+        const code = urlParams.get('code');
+        
+        if (code) {
+          addDebugInfo('OAuth code found in URL, exchanging for session...');
+          console.log('OAuth code found, exchanging for session...');
+          
+          const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          
+          setProgress(60);
+          clearTimeout(maxTimeout);
+          
+          if (exchangeError) {
+            addDebugInfo(`Code exchange error: ${exchangeError.message}`);
+            console.error('Code exchange error:', exchangeError);
+            setStatus('error');
+            toast.error('Failed to complete sign-in. Please try again.', { duration: 5000 });
+            return;
+          }
+          
+          if (!exchangeData?.session) {
+            addDebugInfo('No session returned from code exchange');
+            console.error('No session after code exchange');
+            setStatus('no_session');
+            toast.warning('No session was created. Please try signing in again.', { duration: 5000 });
+            return;
+          }
+          
+          // Session created successfully
+          addDebugInfo(`Session created successfully for ${exchangeData.user?.email}`);
+          setProgress(80);
+          const user = exchangeData.user;
+          const userName = user.user_metadata?.full_name || 
+                          user.user_metadata?.name || 
+                          user.email?.split('@')[0] || 
+                          'User';
+          
+          setUserInfo({
+            name: userName,
+            email: user.email || ''
+          });
+          
+          setProgress(100);
+          setStatus('success');
+          
+          console.log('Successfully authenticated with GitHub:', user.email);
+          addDebugInfo('Authentication successful, redirecting...');
+          
+          toast.success(`Welcome back, ${userName}!`, { 
+            duration: 3000,
+            icon: <CheckCircle className="h-4 w-4" />
+          });
+          
+          // Wait a moment for user to see success, then redirect
+          setTimeout(() => {
+            window.location.replace('/');
+          }, 1500);
+          
+          return;
+        }
+        
+        addDebugInfo('No OAuth code found, checking for existing session...');
+        
+        // Fallback: Try to get existing session (for hash-based flow or page refresh)
         const { data, error: sessionError } = await supabase.auth.getSession();
         
         setProgress(60);
         clearTimeout(maxTimeout);
         
         if (sessionError) {
+          addDebugInfo(`Session error: ${sessionError.message}`);
           console.error('Auth callback session error:', sessionError);
           setStatus('error');
           
@@ -74,6 +150,7 @@ export function AuthCallback() {
         setProgress(80);
 
         if (data?.session && data?.user) {
+          addDebugInfo(`Session found for ${data.user.email}`);
           const user = data.user;
           const userName = user.user_metadata?.full_name || 
                           user.user_metadata?.name || 
@@ -89,6 +166,7 @@ export function AuthCallback() {
           setStatus('success');
           
           console.log('Successfully authenticated with GitHub:', user.email);
+          addDebugInfo('Authentication successful, redirecting...');
           
           // Show success message with user info
           toast.success(`Welcome back, ${userName}!`, { 
@@ -103,6 +181,7 @@ export function AuthCallback() {
           }, 1500);
           
         } else {
+          addDebugInfo('No session found in fallback check');
           console.log('No session found after OAuth callback');
           setStatus('no_session');
           toast.warning('No session was created. Please try signing in again.', { 
@@ -242,6 +321,20 @@ export function AuthCallback() {
             <p className="text-xs text-muted-foreground">
               Having trouble? Try using email/password sign-in instead.
             </p>
+            
+            {/* Debug info for troubleshooting */}
+            {debugInfo.length > 0 && (
+              <details className="mt-4 text-left">
+                <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                  Show debug information
+                </summary>
+                <div className="mt-2 p-3 bg-muted rounded-md text-xs font-mono space-y-1 max-h-40 overflow-y-auto">
+                  {debugInfo.map((info, i) => (
+                    <div key={i} className="text-muted-foreground">{info}</div>
+                  ))}
+                </div>
+              </details>
+            )}
           </div>
         )}
       </div>

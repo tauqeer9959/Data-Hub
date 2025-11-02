@@ -44,15 +44,16 @@ export function GitHubSignInButton({ onSuccess, disabled, showFallbackOption = t
       }
       testPopup.close();
 
-      // Trigger GitHub OAuth - ensure no localhost redirects
-      const redirectUrl = window.location.origin.includes('localhost') 
-        ? `${window.location.protocol}//${window.location.host}/auth/callback`
-        : `${window.location.origin}/auth/callback`;
+      // Trigger GitHub OAuth with PKCE flow
+      const redirectUrl = `${window.location.origin}/auth/callback`;
+      
+      console.log('Initiating GitHub OAuth with redirect:', redirectUrl);
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
           redirectTo: redirectUrl,
+          skipBrowserRedirect: false,
         }
       });
 
